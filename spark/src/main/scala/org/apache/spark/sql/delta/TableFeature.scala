@@ -358,7 +358,8 @@ object TableFeature {
         RowTrackingFeature,
         InCommitTimestampTableFeature,
         TypeWideningTableFeature,
-        VacuumProtocolCheckTableFeature)
+        VacuumProtocolCheckTableFeature,
+        VariantTypeTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -480,6 +481,14 @@ object ColumnMappingTableFeature
       case NoMapping => false
       case _ => true
     }
+  }
+}
+
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
   }
 }
 
