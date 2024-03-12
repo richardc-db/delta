@@ -23,6 +23,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -168,6 +169,13 @@ public class DefaultGenericVector implements ColumnVector {
                 structType.at(ordinal).getDataType(),
                 ordinal,
                 (rowId) -> (Row) rowIdToValueAccessor.apply(rowId));
+    }
+
+    @Override
+    public VariantValue getVariant(int rowId) {
+        assertValidRowId(rowId);
+        throwIfUnsafeAccess(VariantType.class, "variant");
+        return (VariantValue) rowIdToValueAccessor.apply(rowId);
     }
 
     private void throwIfUnsafeAccess( Class<? extends DataType> expDataType, String accessType) {

@@ -63,6 +63,7 @@ public abstract class BasePrimitiveType extends DataType {
                 put("timestamp", TimestampType.TIMESTAMP);
                 put("binary", BinaryType.BINARY);
                 put("string", StringType.STRING);
+                put("variant", VariantType.VARIANT);
             }
         });
 

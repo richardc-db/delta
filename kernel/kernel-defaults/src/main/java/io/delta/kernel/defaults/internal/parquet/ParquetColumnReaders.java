@@ -78,6 +78,8 @@ class ParquetColumnReaders {
                 initialBatchSize, (DecimalType) typeFromClient, typeFromFile);
         } else if (typeFromClient instanceof TimestampType) {
             return TimestampConverters.createTimestampConverter(initialBatchSize, typeFromFile);
+        } else if (typeFromClient instanceof VariantType) {
+            return new VariantConverter(initialBatchSize);
         }
 
         throw new UnsupportedOperationException(typeFromClient + " is not supported");

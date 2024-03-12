@@ -313,6 +313,8 @@ public class LogReplay {
                         case "columnMapping":
                             ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
                             break;
+                        case "variantType-dev":
+                            break;
                         default:
                             throw new UnsupportedOperationException(
                                 "Unsupported table feature: " + readerFeature);
