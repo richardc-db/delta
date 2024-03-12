@@ -361,7 +361,8 @@ object TableFeature {
         // Identity columns are under development and only available in testing.
         IdentityColumnsTableFeature,
         // managed-commits are under development and only available in testing.
-        ManagedCommitTableFeature)
+        ManagedCommitTableFeature,
+        VariantTypeTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -506,6 +507,14 @@ object IdentityColumnsTableFeature
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
+  }
+}
+
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
   }
 }
 
