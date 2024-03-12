@@ -50,8 +50,8 @@ public class TableFeatures {
                             break;
                         case "deletionVectors": // fall through
                         case "timestampNtz": // fall through
-                        case "vacuumProtocolCheck": // fall through
-                        case "v2Checkpoint":
+                        case "variantType-dev": // fall through
+                        case "vacuumProtocolCheck":
                             break;
                         default:
                             throw DeltaErrors.unsupportedReadFeature(3, readerFeature);
