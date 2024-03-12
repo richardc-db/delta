@@ -189,6 +189,30 @@ class ParquetFileWriterSuite extends AnyFunSuite
       }
   }
 
+  test("write variant") {
+    withTempDir { tempPath =>
+      val variantFilePath = goldenTableFile("variantbasic").getAbsolutePath
+      val schema = tableSchema(variantFilePath)
+
+      val physicalSchema = if (hasColumnMappingId(variantFilePath)) {
+        convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+      } else {
+        schema
+      }
+      val readData = readParquetUsingKernelAsColumnarBatches(variantFilePath, physicalSchema)
+        // Convert the schema of the data to the physical schema with field ids
+        .map(_.withNewSchema(physicalSchema))
+        // convert the data to filtered columnar batches
+        .map(_.toFiltered(Option.empty[Predicate]))
+
+      val writeOutput = writeToParquetUsingKernel(readData, tempPath.getAbsolutePath)
+
+      val readWrittenData =
+        readParquetUsingKernelAsColumnarBatches(tempPath.getAbsolutePath, physicalSchema)
+      // TODO(r.chen): Finish this and make assertions.
+    }
+  }
+
   test("columnar batches containing different schema") {
     withTempDir { tempPath =>
       val targetDir = tempPath.getAbsolutePath

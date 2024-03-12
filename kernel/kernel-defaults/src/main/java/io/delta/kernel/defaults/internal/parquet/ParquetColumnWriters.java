@@ -32,6 +32,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
+import io.delta.kernel.defaults.internal.data.vector.DefaultVariantVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.MAX_BYTES_PER_PRECISION;
 
 /**
@@ -142,6 +143,8 @@ class ParquetColumnWriters {
             return new MapWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof StructType) {
             return new StructWriter(colName, fieldIndex, columnVector);
+        } else if (dataType instanceof VariantType) {
+            return new VariantWriter(colName, fieldIndex, columnVector);
         }
 
         throw new IllegalArgumentException("Unsupported column vector type: " + dataType);
@@ -471,6 +474,33 @@ class ParquetColumnWriters {
             for (ColumnWriter fieldWriter : fieldWriters) {
                 fieldWriter.writeRowValue(recordConsumer, rowId);
             }
+            recordConsumer.endGroup();
+        }
+    }
+
+    static class VariantWriter extends ColumnWriter {
+        private ColumnWriter valueWriter;
+        private ColumnWriter metadataWriter;
+
+        VariantWriter(String name, int fieldId, ColumnVector variantColumnVector) {
+            super(name, fieldId, variantColumnVector);
+            valueWriter = new BinaryWriter(
+                "value",
+                0,
+                ((DefaultVariantVector) variantColumnVector).getValueVector()
+            );
+            metadataWriter = new BinaryWriter(
+                "metadata",
+                1,
+                ((DefaultVariantVector) variantColumnVector).getMetadataVector()
+            );
+        }
+
+        @Override
+        void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
+            recordConsumer.startGroup();
+            valueWriter.writeRowValue(recordConsumer, rowId);
+            metadataWriter.writeRowValue(recordConsumer, rowId);
             recordConsumer.endGroup();
         }
     }
