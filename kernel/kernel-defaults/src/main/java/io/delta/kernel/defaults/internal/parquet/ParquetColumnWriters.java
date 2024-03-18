@@ -32,7 +32,6 @@ import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
-import io.delta.kernel.defaults.internal.data.vector.DefaultVariantVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.MAX_BYTES_PER_PRECISION;
 
 /**
@@ -487,12 +486,12 @@ class ParquetColumnWriters {
             valueWriter = new BinaryWriter(
                 "value",
                 0,
-                ((DefaultVariantVector) variantColumnVector).getValueVector()
+                variantColumnVector.getChild(0)
             );
             metadataWriter = new BinaryWriter(
                 "metadata",
                 1,
-                ((DefaultVariantVector) variantColumnVector).getMetadataVector()
+                variantColumnVector.getChild(1)
             );
         }
 

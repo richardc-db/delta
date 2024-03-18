@@ -17,6 +17,8 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
 
+import org.apache.spark.sql.DataFrame
+
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
@@ -189,28 +191,64 @@ class ParquetFileWriterSuite extends AnyFunSuite
       }
   }
 
-  test("write variant") {
-    withTempDir { tempPath =>
-      val variantFilePath = goldenTableFile("variantbasic").getAbsolutePath
-      val schema = tableSchema(variantFilePath)
+  def testWrite(testName: String)(df: => DataFrame): Unit = {
+    test(testName) {
+      withTable("test_table") {
+        withTempDir { writeDir =>
+          df.write
+            .format("delta")
+            .mode("overwrite")
+            .saveAsTable("test_table")
+          val filePath = spark.sql("describe table extended `test_table`")
+            .where("col_name = 'Location'")
+            .collect()(0)
+            .getString(1)
+            .replace("file:", "")
 
-      val physicalSchema = if (hasColumnMappingId(variantFilePath)) {
-        convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
-      } else {
-        schema
+          val schema = tableSchema(filePath)
+
+          val physicalSchema = if (hasColumnMappingId(filePath)) {
+            convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+          } else {
+            schema
+          }
+          val readData = readParquetUsingKernelAsColumnarBatches(filePath, physicalSchema)
+            .map(_.toFiltered(Option.empty[Predicate]))
+          val writePath = writeDir.getAbsolutePath
+          val writeOutput = writeToParquetUsingKernel(readData, writePath)
+          // TODO(richardc-db): Test without read from Spark because Spark's Parquet reader relies
+          // on spark-produced footer metadata to properly read variant types.
+          verifyContentUsingKernelReader(writePath, readData)
+        }
       }
-      val readData = readParquetUsingKernelAsColumnarBatches(variantFilePath, physicalSchema)
-        // Convert the schema of the data to the physical schema with field ids
-        .map(_.withNewSchema(physicalSchema))
-        // convert the data to filtered columnar batches
-        .map(_.toFiltered(Option.empty[Predicate]))
-
-      val writeOutput = writeToParquetUsingKernel(readData, tempPath.getAbsolutePath)
-
-      val readWrittenData =
-        readParquetUsingKernelAsColumnarBatches(tempPath.getAbsolutePath, physicalSchema)
-      // TODO(r.chen): Finish this and make assertions.
     }
+  }
+
+  testWrite("basic write variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "parse_json(cast(id as string)) as basic_v",
+      "named_struct('v', parse_json(cast(id as string))) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string))
+      ) as array_v""",
+      "map('test', parse_json(cast(id as string))) as map_value_v",
+      "map(parse_json(cast(id as string)), parse_json(cast(id as string))) as map_key_v"
+    )
+  }
+
+  testWrite("basic write null variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "cast(null as variant) basic_v",
+      "named_struct('v', cast(null as variant)) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        null
+      ) as array_v""",
+      "map('test', cast(null as variant)) as map_value_v"
+    )
   }
 
   test("columnar batches containing different schema") {
