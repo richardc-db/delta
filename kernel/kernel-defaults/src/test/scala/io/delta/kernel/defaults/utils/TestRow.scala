@@ -105,7 +105,7 @@ object TestRow {
         case _: StructType => TestRow(row.getStruct(i))
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
-    })
+    }.toSeq)
   }
 
   def apply(row: SparkRow): TestRow = {
