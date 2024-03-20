@@ -216,8 +216,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
             .map(_.toFiltered(Option.empty[Predicate]))
           val writePath = writeDir.getAbsolutePath
           val writeOutput = writeToParquetUsingKernel(readData, writePath)
-          // TODO(richardc-db): Test without read from Spark because Spark's Parquet reader relies
-          // on spark-produced footer metadata to properly read variant types.
           verifyContentUsingKernelReader(writePath, readData)
         }
       }
