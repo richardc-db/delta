@@ -605,7 +605,7 @@ trait TestUtils extends Assertions with SQLHelper {
   /**
    * Converts a Delta DataType to a Spark DataType.
    */
-  def toSparkType(deltaType: DataType): sparktypes.DataType = {
+  private def toSparkType(deltaType: DataType): sparktypes.DataType = {
     deltaType match {
       case BooleanType.BOOLEAN => sparktypes.DataTypes.BooleanType
       case ByteType.BYTE => sparktypes.DataTypes.ByteType
