@@ -92,33 +92,51 @@ public class ParquetStatsReader {
                         .collect(toImmutableMap(
                                 identity(),
                                 key -> mergeMetadataList(metadataForColumn.get(key))));
-
         Map<Column, Literal> minValues = new HashMap<>();
         Map<Column, Literal> maxValues = new HashMap<>();
         Map<Column, Long> nullCounts = new HashMap<>();
         for (Column statsColumn : statsColumns) {
-            Optional<Statistics<?>> stats = statsForColumn.get(statsColumn);
             DataType columnType = getDataType(dataSchema, statsColumn);
-            if (stats == null || !stats.isPresent() || !isStatsSupportedDataType(columnType)) {
+
+            Optional<Statistics<?>> stats;
+            if (columnType instanceof VariantType) {
+                // Hack: Parquet stores Variant types as a struct with two binary child fields so
+                // the stats are also only stored on the child fields. Because the value and
+                // metadata fields are null iff the variant is null, the null count stat is
+                // retrieved by inspecting the "value" field.
+                int variantColNameLength = statsColumn.getNames().length;
+                String[] variantColNameList =
+                    Arrays.copyOf(statsColumn.getNames(), variantColNameLength + 1);
+                variantColNameList[variantColNameLength] = "value";
+                stats = statsForColumn.get(new Column(variantColNameList));
+            } else {
+                stats = statsForColumn.get(statsColumn);
+            }
+            if (stats == null || !stats.isPresent()) {
                 continue;
             }
             Statistics<?> statistics = stats.get();
 
-            Long numNulls = statistics.isNumNullsSet() ? statistics.getNumNulls() : null;
-            nullCounts.put(statsColumn, numNulls);
-
-            if (numNulls != null && rowCount == numNulls) {
-                // If all values are null, then min and max are also null
-                minValues.put(statsColumn, Literal.ofNull(columnType));
-                maxValues.put(statsColumn, Literal.ofNull(columnType));
-                continue;
+            if (isNullStatSupportedDataType(columnType)) {
+                Long numNulls = statistics.isNumNullsSet() ? statistics.getNumNulls() : null;
+                nullCounts.put(statsColumn, numNulls);
             }
 
-            Literal minValue = decodeMinMaxStat(columnType, statistics, true /* decodeMin */);
-            minValues.put(statsColumn, minValue);
+            if (isMinMaxStatSupportedDataType(columnType)) {
+                Long numNulls = statistics.isNumNullsSet() ? statistics.getNumNulls() : null;
+                if (numNulls != null && rowCount == numNulls) {
+                    // If all values are null, then min and max are also null
+                    minValues.put(statsColumn, Literal.ofNull(columnType));
+                    maxValues.put(statsColumn, Literal.ofNull(columnType));
+                    continue;
+                }
 
-            Literal maxValue = decodeMinMaxStat(columnType, statistics, false /* decodeMin */);
-            maxValues.put(statsColumn, maxValue);
+                Literal minValue = decodeMinMaxStat(columnType, statistics, true /* decodeMin */);
+                minValues.put(statsColumn, minValue);
+
+                Literal maxValue = decodeMinMaxStat(columnType, statistics, false /* decodeMin */);
+                maxValues.put(statsColumn, maxValue);
+            }
         }
 
         return new DataFileStatistics(rowCount, minValues, maxValues, nullCounts);
@@ -220,7 +238,7 @@ public class ParquetStatsReader {
         });
     }
 
-    private static boolean isStatsSupportedDataType(DataType dataType) {
+    public static boolean isMinMaxStatSupportedDataType(DataType dataType) {
         return dataType instanceof BooleanType ||
                 dataType instanceof ByteType ||
                 dataType instanceof ShortType ||
@@ -234,6 +252,22 @@ public class ParquetStatsReader {
                 dataType instanceof BinaryType;
         // TODO: timestamp is complicated to handle because of the storage format (INT96 or INT64).
         // Add support later.
+    }
+
+    public static boolean isNullStatSupportedDataType(DataType dataType) {
+        return dataType instanceof BooleanType ||
+                dataType instanceof ByteType ||
+                dataType instanceof ShortType ||
+                dataType instanceof IntegerType ||
+                dataType instanceof LongType ||
+                dataType instanceof FloatType ||
+                dataType instanceof DoubleType ||
+                dataType instanceof DecimalType ||
+                dataType instanceof DateType ||
+                dataType instanceof StringType ||
+                dataType instanceof BinaryType ||
+                dataType instanceof VariantType;
+        // TODO: add timestamp support later.
     }
 
     private static byte[] getBinaryStat(Statistics<?> statistics, boolean decodeMin) {

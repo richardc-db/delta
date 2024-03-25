@@ -1386,6 +1386,44 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("data skipping - basic variant type") {
+    withTable("test_table") {
+      spark.range(0, 10, 1, 1)
+        .selectExpr(
+          "parse_json(cast(id as string)) as basic_v",
+          "cast(null as variant) as basic_null_v",
+          "named_struct('v', parse_json(cast(id as string))) as basic_struct_v",
+          "named_struct('v', cast(null as variant)) as basic_struct_null_v",
+        )
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("test_table")
+
+      val filePath = spark.sql("describe table extended `test_table`")
+          .where("col_name = 'Location'")
+          .collect()(0)
+          .getString(1)
+          .replace("file:", "")
+
+      checkSkipping(
+        filePath,
+        hits = Seq(
+          isNotNull(col("basic_v")),
+          not(isNotNull(col("basic_null_v"))),
+          isNotNull(nestedCol("basic_struct_v.v")),
+          not(isNotNull(nestedCol("basic_struct_null_v.v")))
+        ),
+        misses = Seq(
+          not(isNotNull(col("basic_v"))),
+          isNotNull(col("basic_null_v")),
+          not(isNotNull(nestedCol("basic_struct_v.v"))),
+          isNotNull(nestedCol("basic_struct_null_v.v"))
+        )
+      )
+    }
+  }
+
   test("data skipping - is not null with DVs in file with non-nulls") {
     withSQLConf(("spark.databricks.delta.properties.defaults.enableDeletionVectors", "true")) {
       withTempDir { tempDir =>
