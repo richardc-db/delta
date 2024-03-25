@@ -19,7 +19,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.unsafe.types.VariantVal
-import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
+import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row, VariantValue}
 import io.delta.kernel.defaults.internal.data.value.DefaultVariantValue
 import io.delta.kernel.types._
 
@@ -46,6 +46,8 @@ import java.time.LocalDate
  * For complex types array and map, the inner elements types should align with this mapping.
  */
 class TestRow(val values: Array[Any]) {
+
+  def isNullAt(i: Int): Boolean = values(i) == null
 
   def length: Int = values.length
 
@@ -174,6 +176,43 @@ object TestRow {
       }
     })
   }
+
+  def toSparkRow(row: TestRow, schema: StructType): SparkRow =
+    SparkRow(schema.fields.asScala.toSeq.zipWithIndex.map { case (field, i) =>
+      if (row.isNullAt(i)) {
+        null
+      } else {
+        field.getDataType() match {
+          case BooleanType.BOOLEAN => row.get(i).asInstanceOf[Boolean]
+          case ByteType.BYTE => row.get(i).asInstanceOf[Byte]
+          case IntegerType.INTEGER => row.get(i).asInstanceOf[Int]
+          case LongType.LONG => row.get(i).asInstanceOf[Long]
+          case ShortType.SHORT => row.get(i).asInstanceOf[Short]
+          case DateType.DATE =>
+            val rowVal = row.get(i).asInstanceOf[Int]
+            new java.sql.Date(java.util.concurrent.TimeUnit.DAYS.toMillis(rowVal))
+          case TimestampType.TIMESTAMP =>
+            val rowVal = row.get(i).asInstanceOf[Long]
+            new java.sql.Timestamp(java.util.concurrent.TimeUnit.MICROSECONDS.toMillis(rowVal))
+          case FloatType.FLOAT => row.get(i).asInstanceOf[Float]
+          case DoubleType.DOUBLE => row.get(i).asInstanceOf[Double]
+          case StringType.STRING => row.get(i).asInstanceOf[String]
+          case BinaryType.BINARY => row.get(i).asInstanceOf[Array[Byte]]
+          case _: DecimalType => row.get(i).asInstanceOf[java.math.BigDecimal]
+          case at: ArrayType => row.get(i).asInstanceOf[Seq[Any]]
+          case _: MapType => row.get(i).asInstanceOf[Map[Any, Any]]
+          case st: StructType =>
+            toSparkRow(
+              row.get(i).asInstanceOf[TestRow],
+              new StructType(field.getDataType().asInstanceOf[StructType].fields())
+            )
+          case VariantType.VARIANT =>
+            val variantVal = row.get(i).asInstanceOf[VariantValue]
+            new VariantVal(variantVal.getValue(), variantVal.getMetadata())
+          case _ => throw new UnsupportedOperationException("unrecognized data type")
+        }
+      }
+    }: _*)
 
   /**
    * Retrieves the value at `rowId` in the column vector as it's corresponding scala type.

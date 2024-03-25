@@ -16,8 +16,12 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
+import java.util.ArrayList
+import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{Row => SparkRow}
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
@@ -191,7 +195,9 @@ class ParquetFileWriterSuite extends AnyFunSuite
       }
   }
 
-  def testWrite(testName: String)(df: => DataFrame): Unit = {
+  def testWrite(
+      testName: String,
+      statsColsAndKernelType: Seq[(Column, DataType)])(df: => DataFrame): Unit = {
     test(testName) {
       withTable("test_table") {
         withTempDir { writeDir =>
@@ -215,14 +221,68 @@ class ParquetFileWriterSuite extends AnyFunSuite
           val readData = readParquetUsingKernelAsColumnarBatches(filePath, physicalSchema)
             .map(_.toFiltered(Option.empty[Predicate]))
           val writePath = writeDir.getAbsolutePath
-          val writeOutput = writeToParquetUsingKernel(readData, writePath)
+          val writeOutput = writeToParquetUsingKernel(
+            readData,
+            writePath,
+            statsColumns = statsColsAndKernelType.map { case (col, dt) => col}
+          )
           verifyContentUsingKernelReader(writePath, readData)
+
+          val numMinMaxStatCols = statsColsAndKernelType.count { case (_, dt) =>
+            ParquetStatsReader.isMinMaxStatSupportedDataType(dt)
+          }
+          val numNullStatCols = statsColsAndKernelType.count { case (_, dt) =>
+            ParquetStatsReader.isNullStatSupportedDataType(dt)
+          }
+          verifyVariantStatsUsingKernel(
+            writePath,
+            writeOutput,
+            schema,
+            statsColsAndKernelType,
+            numMinMaxStatCols,
+            numNullStatCols
+          )
         }
       }
     }
   }
 
-  testWrite("basic write variant") {
+  testWrite(
+      "basic write verify stats with kernel",
+      Seq(
+        (new Column("boolcol"), BooleanType.BOOLEAN),
+        (new Column("bytecol"), ByteType.BYTE),
+        (new Column("intcol"), IntegerType.INTEGER),
+        (new Column("longcol"), LongType.LONG),
+        (new Column("shortcol"), ShortType.SHORT),
+        (new Column("floatcol"), FloatType.FLOAT),
+        (new Column("doublecol"), DoubleType.DOUBLE),
+        (new Column("stringcol"), StringType.STRING),
+        (new Column("binarycol"), BinaryType.BINARY),
+        (new Column("decimalcol"), DecimalType.USER_DEFAULT),
+        (new Column("datecol"), DateType.DATE)
+      )) {
+    spark.range(0, 100, 1, 1).selectExpr(
+      "cast(id as boolean) as boolcol",
+      "cast(id as byte) as bytecol",
+      "cast(5 as int) as intcol",
+      "cast(id as long) as longcol",
+      "cast(id as short) as shortcol",
+      "cast(id as float) as floatcol",
+      "cast(id as double) as doublecol",
+      "cast(id as string) as stringcol",
+      "cast(id as binary) as binarycol",
+      "cast(id as decimal(10, 0)) as decimalcol",
+      "current_date() as datecol"
+    )
+  }
+
+  testWrite(
+      "basic write variant",
+      Seq(
+        (new Column("basic_v"), VariantType.VARIANT),
+        (new Column(Array("struct_v", "v")), VariantType.VARIANT)
+      )) {
     spark.range(0, 10, 1, 1).selectExpr(
       "parse_json(cast(id as string)) as basic_v",
       "named_struct('v', parse_json(cast(id as string))) as struct_v",
@@ -236,7 +296,12 @@ class ParquetFileWriterSuite extends AnyFunSuite
     )
   }
 
-  testWrite("basic write null variant") {
+  testWrite(
+      "basic write null variant",
+      Seq(
+        (new Column("basic_v"), VariantType.VARIANT),
+        (new Column(Array("struct_v", "v")), VariantType.VARIANT)
+      )) {
     spark.range(0, 10, 1, 1).selectExpr(
       "cast(null as variant) basic_v",
       "named_struct('v', cast(null as variant)) as struct_v",
@@ -368,6 +433,89 @@ class ParquetFileWriterSuite extends AnyFunSuite
           writeToParquetUsingKernel(dataToWrite, targetDir, targetFileSize)
         }
         assert(e.getMessage.contains("Invalid target Parquet file size: " + targetFileSize))
+      }
+    }
+  }
+
+  def verifyVariantStatsUsingKernel(
+      actualFileDir: String,
+      actualFileStatuses: Seq[DataFileStatus],
+      schema: StructType,
+      statsColumnsAndTypes: Seq[(Column, DataType)],
+      expMinMaxStatsCount: Int,
+      expNullCountStatsCount: Int): Unit = {
+    if (statsColumnsAndTypes.isEmpty) return
+
+    val statFields = ArrayBuffer(
+      new StructField("location", StringType.STRING, true),
+      new StructField("fileSize", LongType.LONG, true),
+      new StructField("lastModifiedTime", LongType.LONG, true),
+      new StructField("rowCount", LongType.LONG, true)
+    )
+
+    val statsColumns = statsColumnsAndTypes.map { _._1 }
+    statsColumnsAndTypes.foreach { case (column, dt) =>
+      val colName = column.getNames().toSeq.mkString("__")
+      statFields ++= ArrayBuffer(
+        new StructField(s"min_$colName", dt, true),
+        new StructField(s"max_$colName", dt, true),
+        new StructField(s"nullCount_$colName", LongType.LONG, true)
+      )
+    }
+
+    val kernelStatsSchema = new StructType(new ArrayList(statFields.asJava))
+
+    val actualStatsOutput = actualFileStatuses
+      .map { fileStatus =>
+        // validate there are the expected number of stats columns
+        assert(fileStatus.getStatistics.isPresent)
+        assert(fileStatus.getStatistics.get().getMinValues.size() === expMinMaxStatsCount)
+        assert(fileStatus.getStatistics.get().getMaxValues.size() === expMinMaxStatsCount)
+        assert(fileStatus.getStatistics.get().getNullCounts.size() === expNullCountStatsCount)
+
+        // Convert to Spark row for comparison with the actual values computing using Spark.
+        TestRow.toSparkRow(
+          fileStatus.toTestRow(statsColumns),
+          kernelStatsSchema)
+      }
+
+    val statDf = spark.createDataFrame(
+      spark.sparkContext.parallelize(actualStatsOutput),
+      kernelStatsSchema.toSpark).createOrReplaceTempView("stats_table")
+
+    val readRows = readParquetFilesUsingKernel(actualFileDir, schema)
+    val sparkRows = readRows.map { row =>
+      TestRow.toSparkRow(row, schema)
+    }
+    val readDf = spark.createDataFrame(spark.sparkContext.parallelize(sparkRows), schema.toSpark)
+    readDf.createOrReplaceTempView("data_table")
+    statsColumnsAndTypes.foreach { case (col, dt) =>
+      val realColName = col.getNames().mkString(".")
+      val statsColNameSuffix = col.getNames().mkString("__")
+
+      if (ParquetStatsReader.isNullStatSupportedDataType(dt)) {
+        val actualNullCount = readDf.where(s"$realColName is null").count()
+        val statsNullCount = spark
+          .sql(s"select nullCount_$statsColNameSuffix from stats_table")
+          .collect()(0)
+          .getLong(0)
+        assert(actualNullCount == statsNullCount)
+      }
+
+      if (ParquetStatsReader.isMinMaxStatSupportedDataType(dt)) {
+        spark.sql(s"""select min($realColName) as minVal, max($realColName) as maxVal
+                      from data_table""").createOrReplaceTempView("min_max_table")
+
+        // Verify that the real min/max values are equal to the reported min/max values.
+        val minAssertionDf = spark.sql(s"""
+          select first(minVal) from min_max_table d, stats_table s
+          where d.minVal = s.min_$statsColNameSuffix""")
+        assert(minAssertionDf.count() == 1)
+
+        val maxAssertionDf = spark.sql(s"""
+          select first(maxVal) from min_max_table d, stats_table s
+          where d.maxVal = s.max_$statsColNameSuffix""")
+        assert(maxAssertionDf.count() == 1)
       }
     }
   }
