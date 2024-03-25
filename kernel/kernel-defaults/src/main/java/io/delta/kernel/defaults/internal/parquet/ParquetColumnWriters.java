@@ -142,6 +142,8 @@ class ParquetColumnWriters {
             return new MapWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof StructType) {
             return new StructWriter(colName, fieldIndex, columnVector);
+        } else if (dataType instanceof VariantType) {
+            return new VariantWriter(colName, fieldIndex, columnVector);
         }
 
         throw new IllegalArgumentException("Unsupported column vector type: " + dataType);
@@ -471,6 +473,33 @@ class ParquetColumnWriters {
             for (ColumnWriter fieldWriter : fieldWriters) {
                 fieldWriter.writeRowValue(recordConsumer, rowId);
             }
+            recordConsumer.endGroup();
+        }
+    }
+
+    static class VariantWriter extends ColumnWriter {
+        private ColumnWriter valueWriter;
+        private ColumnWriter metadataWriter;
+
+        VariantWriter(String name, int fieldId, ColumnVector variantColumnVector) {
+            super(name, fieldId, variantColumnVector);
+            valueWriter = new BinaryWriter(
+                "value",
+                0,
+                variantColumnVector.getChild(0)
+            );
+            metadataWriter = new BinaryWriter(
+                "metadata",
+                1,
+                variantColumnVector.getChild(1)
+            );
+        }
+
+        @Override
+        void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
+            recordConsumer.startGroup();
+            valueWriter.writeRowValue(recordConsumer, rowId);
+            metadataWriter.writeRowValue(recordConsumer, rowId);
             recordConsumer.endGroup();
         }
     }

@@ -17,6 +17,8 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
 
+import org.apache.spark.sql.DataFrame
+
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
@@ -187,6 +189,64 @@ class ParquetFileWriterSuite extends AnyFunSuite
           verifyStatsUsingSpark(targetDir, writeOutput, schema, statsCols, expStatsColCnt)
         }
       }
+  }
+
+  def testWrite(testName: String)(df: => DataFrame): Unit = {
+    test(testName) {
+      withTable("test_table") {
+        withTempDir { writeDir =>
+          df.write
+            .format("delta")
+            .mode("overwrite")
+            .saveAsTable("test_table")
+          val filePath = spark.sql("describe table extended `test_table`")
+            .where("col_name = 'Location'")
+            .collect()(0)
+            .getString(1)
+            .replace("file:", "")
+
+          val schema = tableSchema(filePath)
+
+          val physicalSchema = if (hasColumnMappingId(filePath)) {
+            convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+          } else {
+            schema
+          }
+          val readData = readParquetUsingKernelAsColumnarBatches(filePath, physicalSchema)
+            .map(_.toFiltered(Option.empty[Predicate]))
+          val writePath = writeDir.getAbsolutePath
+          val writeOutput = writeToParquetUsingKernel(readData, writePath)
+          verifyContentUsingKernelReader(writePath, readData)
+        }
+      }
+    }
+  }
+
+  testWrite("basic write variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "parse_json(cast(id as string)) as basic_v",
+      "named_struct('v', parse_json(cast(id as string))) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string))
+      ) as array_v""",
+      "map('test', parse_json(cast(id as string))) as map_value_v",
+      "map(parse_json(cast(id as string)), parse_json(cast(id as string))) as map_key_v"
+    )
+  }
+
+  testWrite("basic write null variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "cast(null as variant) basic_v",
+      "named_struct('v', cast(null as variant)) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        null
+      ) as array_v""",
+      "map('test', cast(null as variant)) as map_value_v"
+    )
   }
 
   test("columnar batches containing different schema") {
