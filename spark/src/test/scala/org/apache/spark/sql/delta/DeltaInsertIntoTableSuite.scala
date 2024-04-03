@@ -57,6 +57,19 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
+  test("Variant type") {
+    withTable("t") {
+      sql("CREATE TABLE t (id LONG, v VARIANT) USING delta")
+      sql("INSERT INTO t (id, v) VALUES (1, parse_json('{\"a\": 1}'))")
+      sql("INSERT INTO t (id, v) VALUES (2, parse_json('{\"b\": 2}'))")
+      sql(
+        "INSERT INTO t SELECT id, parse_json(cast(id as string)) v FROM range(2)")
+
+      checkAnswer(sql("select * from t").selectExpr("id", "to_json(v)"),
+        Seq(Row(1, "{\"a\":1}"), Row(2, "{\"b\":2}"), Row(0, "0"), Row(1, "1")))
+    }
+  }
+
   test("insert overwrite should work with selecting constants") {
     withTable("t1") {
       sql("CREATE TABLE t1 (a int, b int, c int) USING delta PARTITIONED BY (b, c)")
