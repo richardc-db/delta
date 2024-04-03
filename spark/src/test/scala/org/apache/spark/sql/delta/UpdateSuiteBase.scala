@@ -953,4 +953,16 @@ abstract class UpdateSuiteBase
     expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
 
+  test("Variant type") {
+    withSQLConf("spark.databricks.variant.enabled" -> "true") {
+      val df = sql(
+        """SELECT parse_json(cast(id as string)) v, id i
+          FROM range(2)""")
+      append(df)
+      executeUpdate(target = s"delta.`$tempPath`",
+          where = "to_json(v) = '1'", set = "i = 10, v = parse_json('123')")
+      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+          Seq(Row(0, "0"), Row(10, "123")))
+    }
+  }
 }

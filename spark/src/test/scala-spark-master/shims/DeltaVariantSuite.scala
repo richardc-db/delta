@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
@@ -104,6 +104,20 @@ class DeltaVariantSuite
           .withFeature(InvariantsTableFeature)
           .withFeature(AppendOnlyTableFeature)
       )
+    }
+  }
+
+  test("Zorder is not supported for Variant") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl USING DELTA AS SELECT id, cast(null as variant) v from range(100)")
+      val e = intercept[SparkException](sql("optimize tbl zorder by (v)"))
+      checkError(
+        e.getCause.asInstanceOf[SparkThrowable],
+        "DATATYPE_MISMATCH.TYPE_CHECK_FAILURE_WITH_HINT",
+        parameters = Map(
+          "msg" -> "cannot sort data type variant",
+          "hint" -> "",
+          "sqlExpr" -> "\"rangepartitionid(v)\""))
     }
   }
 }

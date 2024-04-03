@@ -42,7 +42,7 @@ import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.streaming.{Sink, Source}
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DataType, StructType, VariantType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /** A DataSource V1 for integrating Delta into Spark SQL batch and Streaming APIs. */
@@ -250,6 +250,11 @@ class DeltaDataSource
         options = dfOptions
       ).toBaseRelation
     }
+  }
+
+  // Extend the default `supportsDataType` to allow VariantType.
+  override def supportsDataType(dt: DataType): Boolean = {
+    dt.isInstanceOf[VariantType] || super.supportsDataType(dt)
   }
 
   override def shortName(): String = {

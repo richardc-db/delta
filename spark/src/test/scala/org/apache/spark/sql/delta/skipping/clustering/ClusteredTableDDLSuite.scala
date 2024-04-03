@@ -398,6 +398,22 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
     }
   }
 
+  test("Variant is not supported") {
+    val e = intercept[DeltaAnalysisException] {
+      createOrReplaceClusteredTable("CREATE", testTable, "id long, v variant", "v")
+    }
+    checkError(
+      e,
+      "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+      parameters = Map(
+        "columns" -> "v",
+        "schema" -> """root
+                      | |-- id: long (nullable = true)
+                      | |-- v: variant (nullable = true)
+                      |""".stripMargin)
+    )
+  }
+
   protected def withTempDirIfNecessary(f: Option[String] => Unit): Unit = {
     if (isPathBased) {
       withTempDir { dir =>
