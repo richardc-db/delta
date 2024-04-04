@@ -145,7 +145,6 @@ class StatsCollectionSuite
         assert(statsDf.where('numRecords.isNotNull).count() > 0)
         // Make sure stats indicate 2 rows, min [0], max [1]
         checkAnswer(statsDf, Row(2, Row(0), Row(1)))
-        assert(false)
       }
     }
   }
