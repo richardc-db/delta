@@ -20,12 +20,18 @@ import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.types.StructType
 
 class DeltaVariantSuite
     extends QueryTest
-    with DeltaSQLCommandTest { self: DeltaVariantSuite =>
+    with DeltaSQLCommandTest
+    with DeltaSQLTestUtils
+    with TestsStatistics {
+
+  import testImplicits._
+
   private def getProtocolForTable(table: String): Protocol = {
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
     deltaLog.unsafeVolatileSnapshot.protocol
@@ -104,6 +110,28 @@ class DeltaVariantSuite
           .withFeature(InvariantsTableFeature)
           .withFeature(AppendOnlyTableFeature)
       )
+    }
+  }
+
+  statsTest("optimize variant") {
+    withTable("tbl") {
+      spark.range(0, 100)
+        .selectExpr("case when id % 2 = 0 then parse_json(cast(id as string)) else null end as v")
+        .repartition(100)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("tbl")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+      val startCount = deltaLog.unsafeVolatileSnapshot.numOfFiles
+      val startSizes = deltaLog.unsafeVolatileSnapshot.allFiles.select('size).as[Long].collect()
+      val res = sql("OPTIMIZE tbl")
+      val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+      assert(metrics.numFilesAdded > 0)
+      assert(metrics.numTableColumnsWithStats == 1)
+
+      val statsDf = getStatsDf(deltaLog, Seq($"numRecords", $"nullCount"))
+      checkAnswer(statsDf, Row(100, Row(50)))
     }
   }
 

@@ -145,6 +145,36 @@ class StatsCollectionSuite
         assert(statsDf.where('numRecords.isNotNull).count() > 0)
         // Make sure stats indicate 2 rows, min [0], max [1]
         checkAnswer(statsDf, Row(2, Row(0), Row(1)))
+        assert(false)
+      }
+    }
+  }
+
+  statsTest("recompute variant stats") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+        val df = spark.range(2)
+          .selectExpr(
+            "case when id % 2 = 0 then parse_json(cast(id as string)) else null end as v"
+          )
+          .coalesce(1)
+          .toDF()
+        df.write.format("delta").save(tempDir.toString())
+        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        
+        assert(getStatsDf(deltaLog, Seq($"numRecords")).where('numRecords.isNotNull).count() == 0)
+
+        {
+          StatisticsCollection.recompute(spark, deltaLog)
+        }
+        checkAnswer(
+          spark.read.format("delta").load(tempDir.getCanonicalPath),
+          df
+        )
+        val statsDf = getStatsDf(deltaLog, Seq($"numRecords", $"nullCount"))
+        assert(statsDf.where('numRecords.isNotNull).count() > 0)
+        // Make sure stats indicate 2 rows, nullCount [1]
+        checkAnswer(statsDf, Row(2, Row(1)))
       }
     }
   }
