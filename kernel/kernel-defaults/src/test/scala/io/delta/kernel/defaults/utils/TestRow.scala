@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.{Seq => MutableSeq}
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.{Row => SparkRow}
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
@@ -110,7 +111,7 @@ object TestRow {
         case _: StructType => TestRow(row.getStruct(i))
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
-    })
+    }.toSeq)
   }
 
   def apply(row: SparkRow): TestRow = {
@@ -133,7 +134,7 @@ object TestRow {
         case _: sparktypes.BinaryType => obj.asInstanceOf[Array[Byte]]
         case _: sparktypes.DecimalType => obj.asInstanceOf[java.math.BigDecimal]
         case arrayType: sparktypes.ArrayType =>
-          obj.asInstanceOf[Seq[Any]]
+          obj.asInstanceOf[MutableSeq[Any]]
             .map(decodeCellValue(arrayType.elementType, _))
         case mapType: sparktypes.MapType => obj.asInstanceOf[Map[Any, Any]].map {
           case (k, v) =>
