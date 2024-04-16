@@ -43,7 +43,7 @@ import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
 
@@ -1539,6 +1539,62 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           .withFilter(tableClient, predicate)
           .build(),
         tableClient = tableClient)
+    }
+  }
+
+  import io.delta.kernel.Scan
+  import io.delta.kernel.internal.util.Utils.toCloseableIterator
+  import io.delta.kernel.internal.data.ScanStateRow
+  import io.delta.kernel.internal.InternalScanFileUtils
+  import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+  test("extract variant") {
+    withTable("test_table") {
+      spark.range(0, 10).selectExpr("parse_json(cast(id as string)) as v").write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("test_table")
+      val path = spark.sql("describe table extended `test_table`")
+        .where("col_name = 'Location'")
+        .collect()(0)
+        .getString(1)
+        .replace("file:", "")
+
+      val kernelSchema = tableSchema(path)
+      
+      val snapshot = latestSnapshot(path)
+      val scan = snapshot
+        .getScanBuilder(defaultTableClient)
+        .withReadSchema(defaultTableClient, new StructType())
+        .withExtractedVariantField(defaultTableClient, "v", STRING, "extractedField")
+        .build()
+      val scanState = scan.getScanState(defaultTableClient)
+      val physicalReadSchema = ScanStateRow.getPhysicalDataReadSchema(defaultTableClient, scanState)
+      val scanFilesIter = scan.getScanFiles(defaultTableClient)
+      while (scanFilesIter.hasNext()) {
+        val scanFilesBatch = scanFilesIter.next()
+        val scanFileRows = scanFilesBatch.getRows()
+        while (scanFileRows.hasNext()) {
+          val scanFileRow = scanFileRows.next()
+          val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
+
+          val physicalDataIter = defaultTableClient.getParquetHandler.readParquetFiles(
+            singletonCloseableIterator(fileStatus),
+            physicalReadSchema,
+            Optional.empty())
+
+          val transformedRowsIter = Scan.transformPhysicalData(
+            defaultTableClient,
+            scanState,
+            scanFileRow,
+            physicalDataIter
+          )
+          
+          val transformedRows = transformedRowsIter
+            .asScala.toSeq.map(_.getRows).flatMap(_.toSeq).map(TestRow(_))
+
+          transformedRows.foreach(println)
+        }
+      }
     }
   }
 }

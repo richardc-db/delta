@@ -16,13 +16,16 @@
 
 package io.delta.kernel.internal;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -44,6 +47,7 @@ public class ScanBuilderImpl
 
     private StructType readSchema;
     private Optional<Predicate> predicate;
+    private List<ExtractedVariantOptions> extractedVariantFields;
 
     public ScanBuilderImpl(
             Path dataPath,
@@ -60,6 +64,7 @@ public class ScanBuilderImpl
         this.tableClient = tableClient;
         this.readSchema = snapshotSchema;
         this.predicate = Optional.empty();
+        this.extractedVariantFields = new ArrayList();
     }
 
     @Override
@@ -79,6 +84,25 @@ public class ScanBuilderImpl
     }
 
     @Override
+    public ScanBuilder withExtractedVariantField(
+            TableClient tableClient,
+            String path,
+            DataType type,
+            String extractedFieldName) {
+        String[] splitPath = splitVariantPath(path);
+        extractedVariantFields.add(new ExtractedVariantOptions(
+            new Column(splitPath), type, extractedFieldName));
+
+        // TODO: were attaching the actual variant column name right now.
+        // Will this work with column mapping/is there a more robust way?
+        if (readSchema.indexOf(splitPath[0]) == -1) {
+            readSchema = readSchema.add(StructField.internallyAddedVariantSchema(splitPath[0]));
+        }
+
+        return this;
+    }
+
+    @Override
     public Scan build() {
         return new ScanImpl(
             snapshotSchema,
@@ -87,6 +111,12 @@ public class ScanBuilderImpl
             metadata,
             logReplay,
             predicate,
+            extractedVariantFields,
             dataPath);
+    }
+
+    private String[] splitVariantPath(String path) {
+        // TODO: account for square brackets and array indices later.
+        return path.split("\\.");
     }
 }

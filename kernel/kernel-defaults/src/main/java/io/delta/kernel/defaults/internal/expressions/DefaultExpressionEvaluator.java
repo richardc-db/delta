@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -276,6 +277,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         .collect(Collectors.toList())),
                 children.get(0).outputType
             );
+        }
+
+        @Override
+        ExpressionTransformResult visitVariantGet(ScalarExpression variantGet) {
+            Expression transformedVariantInput = visit(childAt(variantGet, 0)).expression;
+            Expression transformedPath = visit(childAt(variantGet, 1)).expression;
+            Expression transformedType = visit(childAt(variantGet, 2)).expression;
+
+            // TODO: actually finish this. Do validations and cast anything if necessary.
+            return new ExpressionTransformResult(
+                new ScalarExpression(
+                    "VARIANT_GET",
+                    Arrays.asList(transformedVariantInput, transformedPath, transformedType)),
+                // TODO Hardcoded to string type output
+                StringType.STRING);
         }
 
         private Predicate validateIsPredicate(
@@ -556,6 +572,16 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     return 0; // If all are null then any idx suffices
                 }
             );
+        }
+
+        @Override
+        ColumnVector visitVariantGet(ScalarExpression variantGet) {
+            ColumnVector variantResult = visit(childAt(variantGet, 0));
+            ColumnVector pathResult = visit(childAt(variantGet, 1));
+            ColumnVector dataTypeResult = visit(childAt(variantGet, 2));
+
+            // TODO: actually implement variant_get rather than returning the path.
+            return pathResult;
         }
 
         /**

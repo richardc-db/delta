@@ -369,6 +369,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
+      // can we cross compile spark-variant?
+      // "org.apache.spark" %% "spark-variant" % SPARK_MASTER_VERSION % "provided",
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 

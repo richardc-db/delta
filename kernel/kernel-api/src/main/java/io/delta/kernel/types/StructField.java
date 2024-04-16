@@ -37,6 +37,8 @@ public class StructField {
      */
     private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
 
+    private static String IS_INTERNALLY_ADDED_VARIANT = "isInternallyAddedVariant";
+
     /**
      * The name of a row index metadata column. When present this column must be populated with
      * row index of each row when reading from parquet.
@@ -47,6 +49,14 @@ public class StructField {
         LongType.LONG,
         false,
         FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build());
+
+    public static StructField internallyAddedVariantSchema(String fieldName) {
+        return new StructField(
+            fieldName,
+            VariantType.VARIANT,
+            true,
+            FieldMetadata.builder().putBoolean(IS_INTERNALLY_ADDED_VARIANT, true).build());
+    }
 
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -107,6 +117,11 @@ public class StructField {
     public boolean isMetadataColumn() {
         return metadata.contains(IS_METADATA_COLUMN_KEY) &&
             (boolean) metadata.get(IS_METADATA_COLUMN_KEY);
+    }
+
+    public boolean isInternallyAddedVariant() {
+        return metadata.contains(IS_INTERNALLY_ADDED_VARIANT) &&
+            (boolean) metadata.get(IS_INTERNALLY_ADDED_VARIANT);
     }
 
     public boolean isDataColumn() {

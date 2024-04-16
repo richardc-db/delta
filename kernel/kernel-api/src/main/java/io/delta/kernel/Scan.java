@@ -17,7 +17,9 @@
 package io.delta.kernel;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
@@ -27,6 +29,7 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 
+import io.delta.kernel.internal.ExtractedVariantOptions;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
@@ -36,6 +39,7 @@ import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VariantUtils;
 
 /**
  * Represents a scan of a Delta table.
@@ -134,6 +138,7 @@ public interface Scan {
             StructType physicalReadSchema = null;
             StructType logicalReadSchema = null;
             String tablePath = null;
+            List<ExtractedVariantOptions> extractedVariantOptions = null;
 
             RoaringBitmapArray currBitmap = null;
             DeletionVectorDescriptor currDV = null;
@@ -144,6 +149,7 @@ public interface Scan {
                 }
                 physicalReadSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
                 logicalReadSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
+                extractedVariantOptions = ScanStateRow.getExtractedVariantFields(scanState);
 
                 tablePath = ScanStateRow.getTableRoot(scanState);
                 inited = true;
@@ -203,6 +209,19 @@ public interface Scan {
                         physicalReadSchema
                     );
 
+                // Add extracted variant columns.=
+                if (extractedVariantOptions.size() > 0) {
+                    nextDataBatch = VariantUtils.withExtractedVariantFields(
+                        tableClient.getExpressionHandler(),
+                        nextDataBatch,
+                        extractedVariantOptions
+                    );
+                }
+
+                // TODO: Implement default columnarBatch slice methods to make this more efficient.
+                // Remove added variant columns required for scan.
+                nextDataBatch = removeInternallyAddedVariantCols(nextDataBatch, physicalReadSchema);
+
                 // Change back to logical schema
                 String columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
                 switch (columnMappingMode) {
@@ -218,6 +237,26 @@ public interface Scan {
                 }
 
                 return new FilteredColumnarBatch(nextDataBatch, selectionVector);
+            }
+
+            private ColumnarBatch removeInternallyAddedVariantCols(
+                    ColumnarBatch batch,
+                    StructType schema) {
+                int numToRemove = (int) schema.fields().stream()
+                    .filter(field -> field.isInternallyAddedVariant())
+                    .count();
+
+                // There is no guarantee that `ColumnarBatch.withDeletedColumnAt` doesn't reorder
+                // the schema so the added variant columns must be removed one by one.
+                for (int i = 0; i < numToRemove; i++) {
+                    Optional<Integer> idxToRemove = IntStream.range(0, schema.length())
+                        .filter(idx -> schema.at(idx).isInternallyAddedVariant())
+                        .boxed()
+                        .findFirst();
+
+                    batch = batch.withDeletedColumnAt(idxToRemove.get().intValue());
+                }
+                return batch;
             }
         };
     }

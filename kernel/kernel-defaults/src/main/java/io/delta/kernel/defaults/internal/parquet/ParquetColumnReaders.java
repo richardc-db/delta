@@ -83,6 +83,8 @@ class ParquetColumnReaders {
         } else if (typeFromClient instanceof TimestampNTZType) {
             return createTimestampNtzConverter(initialBatchSize, typeFromFile);
         } else if (typeFromClient instanceof VariantType) {
+            // TODO: When shredding happens, we need to pass in the `typeFromFile` to read the
+            // shredded paths.
             return new VariantColumnReader(initialBatchSize);
         }
 
