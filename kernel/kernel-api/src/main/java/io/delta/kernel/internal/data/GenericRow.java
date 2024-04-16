@@ -141,7 +141,8 @@ public class GenericRow implements Row {
         return (VariantValue) getValue(ordinal);
     }
 
-    private Object getValue(int ordinal) {
+    // TODO: HACK to not have to serialize and deserialize the ExtractedVarinatOptions list.
+    public Object getValue(int ordinal) {
         return ordinalToValue.get(ordinal);
     }
 

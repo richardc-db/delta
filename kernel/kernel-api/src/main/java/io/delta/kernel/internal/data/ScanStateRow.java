@@ -24,6 +24,7 @@ import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
+import io.delta.kernel.internal.ExtractedVariantOptions;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -41,7 +42,12 @@ public class ScanStateRow extends GenericRow {
         .add("partitionColumns", new ArrayType(StringType.STRING, false))
         .add("minReaderVersion", IntegerType.INTEGER)
         .add("minWriterVersion", IntegerType.INTEGER)
-        .add("tablePath", StringType.STRING);
+        .add("tablePath", StringType.STRING)
+        .add("extractedVariantFields", new ArrayType(new StructType()
+            .add("path", StringType.STRING, false)
+            .add("fieldName", StringType.STRING, false)
+            .add("type", StringType.STRING, false), false)
+        );
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
         IntStream.range(0, SCHEMA.length())
@@ -54,7 +60,8 @@ public class ScanStateRow extends GenericRow {
         String readSchemaLogicalJson,
         String readSchemaPhysicalJson,
         String readPhysicalDataSchemaJson,
-        String tablePath) {
+        String tablePath,
+        List<ExtractedVariantOptions> extractedVariantOptions) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
         valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
         valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
@@ -65,6 +72,8 @@ public class ScanStateRow extends GenericRow {
         valueMap.put(COL_NAME_TO_ORDINAL.get("minReaderVersion"), protocol.getMinReaderVersion());
         valueMap.put(COL_NAME_TO_ORDINAL.get("minWriterVersion"), protocol.getMinWriterVersion());
         valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+        // TODO: HACK to not have to serialize and deserialize the ExtractedVarinatOptions list.
+        valueMap.put(COL_NAME_TO_ORDINAL.get("extractedVariantFields"), extractedVariantOptions);
         return new ScanStateRow(valueMap);
     }
 
@@ -146,5 +155,11 @@ public class ScanStateRow extends GenericRow {
      */
     public static String getTableRoot(Row scanState) {
         return scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
+    }
+
+    // TODO: HACK to not have to serialize and deserialize the ExtractedVarinatOptions list.
+    public static List<ExtractedVariantOptions> getExtractedVariantFields(Row scanState) {
+        return (List<ExtractedVariantOptions>) ((ScanStateRow) scanState).getValue(
+            COL_NAME_TO_ORDINAL.get("extractedVariantFields"));
     }
 }

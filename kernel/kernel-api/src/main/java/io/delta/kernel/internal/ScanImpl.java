@@ -58,6 +58,7 @@ public class ScanImpl implements Scan {
     private final LogReplay logReplay;
     private final Path dataPath;
     private final Optional<Tuple2<Predicate, Predicate>> partitionAndDataFilters;
+    private final List<ExtractedVariantOptions> extractedVariantFields;
     private final Supplier<Map<String, StructField>> partitionColToStructFieldMap;
     private boolean accessedScanFiles;
 
@@ -68,6 +69,7 @@ public class ScanImpl implements Scan {
             Metadata metadata,
             LogReplay logReplay,
             Optional<Predicate> filter,
+            List<ExtractedVariantOptions> extractedVariantFields,
             Path dataPath) {
         this.snapshotSchema = snapshotSchema;
         this.readSchema = readSchema;
@@ -85,6 +87,7 @@ public class ScanImpl implements Scan {
                             field -> field.getName().toLowerCase(Locale.ROOT),
                             identity()));
         };
+        this.extractedVariantFields = extractedVariantFields;
     }
 
     /**
@@ -157,7 +160,8 @@ public class ScanImpl implements Scan {
             readSchema.toJson(),
             physicalReadSchema.toJson(),
             physicalDataReadSchema.toJson(),
-            dataPath.toUri().toString());
+            dataPath.toUri().toString(),
+            extractedVariantFields);
     }
 
     @Override

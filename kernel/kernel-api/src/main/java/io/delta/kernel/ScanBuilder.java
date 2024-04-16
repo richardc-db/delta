@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -48,6 +49,12 @@ public interface ScanBuilder {
      * @return A {@link ScanBuilder} with projection pruning.
      */
     ScanBuilder withReadSchema(TableClient tableClient, StructType readSchema);
+
+    ScanBuilder withExtractedVariantField(
+            TableClient tableClient,
+            String path,
+            DataType type,
+            String extractedFieldName);
 
     /**
      * @return Build the {@link Scan instance}
