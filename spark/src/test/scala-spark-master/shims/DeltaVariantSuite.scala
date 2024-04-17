@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.mutable.{Seq => MutableSeq}
+
 import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.DeltaAnalysisException
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.types.StructType
@@ -118,6 +121,118 @@ class DeltaVariantSuite
           "msg" -> "cannot sort data type variant",
           "hint" -> "",
           "sqlExpr" -> "\"rangepartitionid(v)\""))
+    }
+  }
+
+  test("streaming variant delta table") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(100)
+        .selectExpr("parse_json(cast(id as string)) v")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+
+      val streamingDf = spark.readStream
+        .format("delta")
+        .load(path)
+        .selectExpr("v::int as extractedVal")
+
+      val q = streamingDf.writeStream
+        .format("memory")
+        .queryName("test_table")
+        .start()
+      
+      q.processAllAvailable()
+      q.stop()
+
+      val actual = spark.sql("select extractedVal from test_table")
+      val expected = spark.sql("select id from range(100)")
+      checkAnswer(actual, expected.collect())
+    }
+  }
+
+  Seq("variant-writer-one", "variant-writer-two").foreach { writer =>
+    test(s"variant written by databricks $writer can be read") {
+      val path = s"src/test/resources/delta/$writer"
+      val expected = spark.range(0, 10000, 1, 1).selectExpr(
+        "id % 3 as id", "parse_json(cast(id as string)) v")
+
+      checkAnswer(spark.read.format("delta").load(path), expected.collect())
+    }
+  }
+
+  test("variant works with schema evolution") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(0, 100, 1, 1)
+        .selectExpr("id", "parse_json(cast(id as string)) v")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+
+      spark.range(100, 200, 1, 1)
+        .selectExpr(
+          "id",
+          "parse_json(cast(id as string)) v",
+          "parse_json(cast(id as string)) v_two"
+        )
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .save(path)
+
+      val expected = spark.range(0, 200, 1, 1).selectExpr(
+        "id",
+        "parse_json(cast(id as string)) v",
+        "case when id >= 100 then parse_json(cast(id as string)) else null end v_two"
+      )
+
+      val read = spark.read.format("delta").load(path)
+      checkAnswer(read, expected.collect())
+    }
+  }
+
+  test("variant cannot be used as a clustering column") {
+    withTable("tbl") {
+      val e = intercept[DeltaAnalysisException] {
+        sql("CREATE TABLE tbl(v variant) USING DELTA CLUSTER BY (v)")
+      }
+      checkError(
+        e,
+        "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+        parameters = Map(
+          "columns" -> "v",
+          "schema" -> """#root
+                         # |-- v: variant (nullable = true)
+                         #""".stripMargin('#')
+        )
+      )
+    }
+  }
+
+  test("describe history works with variant column") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+      // Create and insert should result in two table versions.
+      assert(sql("DESCRIBE HISTORY tbl").count() == 2)
+    }
+  }
+
+  test("describe detail works with variant column") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+
+      val tableFeatures = sql("DESCRIBE DETAIL tbl")
+        .selectExpr("tableFeatures")
+        .collect()(0)
+        .getAs[MutableSeq[String]](0)
+      assert(tableFeatures.find(f => f == "variantType-dev").nonEmpty)
     }
   }
 }
