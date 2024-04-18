@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.IOException
+import java.nio.file.{Files, Path, Paths, StandardCopyOption}
 import scala.collection.mutable.{Seq => MutableSeq}
 
 import org.apache.spark.{SparkException, SparkThrowable}
@@ -33,6 +35,34 @@ class DeltaVariantSuite
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
     deltaLog.unsafeVolatileSnapshot.protocol
   }
+
+  // JSON string used to validate golden file testing for variant-writer-one and variant-writer-two.
+  private val goldenFileJsonString = """
+  {
+    "arr": [5, 10, 15],
+    "numeric": 5,
+    "decimal": 4.4,
+    "str": "test",
+    "struct": {
+      "child": 10
+    },
+    "ts": "2024-03-01",
+    "arrayOfStructs": [{"b": "str"}, {"b": null}, {"diffKey": null}, {"diffKey": 5}]
+  }
+  """.filterNot(_.isWhitespace)
+
+
+  private def copyDirectory(sourceDir: Path, targetDir: Path): Unit = {
+    Files.walk(sourceDir).forEach { sourcePath =>
+      val targetPath = targetDir.resolve(sourceDir.relativize(sourcePath))
+      try {
+        Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING)
+      } catch {
+        case e: IOException => throw new IOException(s"Error copying file: ${e.getMessage}")
+      }
+    }
+  }
+
 
   test("create a new table with Variant, higher protocol and feature should be picked.") {
     withTable("tbl") {
@@ -153,13 +183,66 @@ class DeltaVariantSuite
     }
   }
 
-  Seq("variant-writer-one", "variant-writer-two").foreach { writer =>
-    test(s"variant written by databricks $writer can be read") {
-      val path = s"src/test/resources/delta/$writer"
+  Seq("variant-writer-one", "variant-writer-two").foreach { tableName =>
+    test(s"variant written by databricks $tableName can be read") {
+      val path = s"src/test/resources/delta/$tableName"
       val expected = spark.range(0, 10000, 1, 1).selectExpr(
-        "id % 3 as id", "parse_json(cast(id as string)) v")
+        "id % 3 as id",
+        s"parse_json('$goldenFileJsonString') v",
+        s"""array(
+          parse_json('$goldenFileJsonString'),
+          null,
+          parse_json('$goldenFileJsonString'),
+          null,
+          parse_json('$goldenFileJsonString')) as array_of_variants""",
+        s"named_struct('v', parse_json('$goldenFileJsonString')) struct_of_variants",
+        s"map(id, parse_json('$goldenFileJsonString'), 'nullKey', null) map_of_variants"
+      )
 
       checkAnswer(spark.read.format("delta").load(path), expected.collect())
+    }
+  }
+
+  Seq("variant-writer-one", "variant-writer-two").foreach { tableName =>
+    test(s"appending to delta table written by databricks with variants works - $tableName") {
+      withTempDir { dir =>
+        val sourceDirPath = Paths.get(s"src/test/resources/delta/$tableName")
+        val targetDirPath = Paths.get(dir.getAbsolutePath)
+
+        try {
+          // Copy golden file to a temporary directory so the test can append to it freely.
+          copyDirectory(sourceDirPath, targetDirPath)
+        } catch {
+          case e: IOException => println(s"Error copying directory: ${e.getMessage}")
+        }
+
+        spark.range(10000, 15000, 1, 1).selectExpr(
+          "id % 3 as id",
+          s"parse_json('$goldenFileJsonString') v",
+          s"""array(
+            parse_json('$goldenFileJsonString'),
+            null,
+            parse_json('$goldenFileJsonString'),
+            null,
+            parse_json('$goldenFileJsonString')) as array_of_variants""",
+          s"named_struct('v', parse_json('$goldenFileJsonString')) struct_of_variants",
+          s"map(id, parse_json('$goldenFileJsonString'), 'nullKey', null) map_of_variants"
+        ).write.format("delta").mode("append").save(dir.getAbsolutePath)
+
+        val expected = spark.range(0, 15000, 1, 1).selectExpr(
+          "id % 3 as id",
+          s"parse_json('$goldenFileJsonString') v",
+          s"""array(
+            parse_json('$goldenFileJsonString'),
+            null,
+            parse_json('$goldenFileJsonString'),
+            null,
+            parse_json('$goldenFileJsonString')) as array_of_variants""",
+          s"named_struct('v', parse_json('$goldenFileJsonString')) struct_of_variants",
+          s"map(id, parse_json('$goldenFileJsonString'), 'nullKey', null) map_of_variants"
+        )
+        checkAnswer(spark.read.format("delta").load(dir.getAbsolutePath), expected.collect())
+      }
     }
   }
 
