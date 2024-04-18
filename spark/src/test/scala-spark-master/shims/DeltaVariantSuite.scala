@@ -206,8 +206,9 @@ class DeltaVariantSuite
   Seq("variant-writer-one", "variant-writer-two").foreach { tableName =>
     test(s"appending to delta table written by databricks with variants works - $tableName") {
       withTempDir { dir =>
+        val targetPath = dir.getAbsolutePath
         val sourceDirPath = Paths.get(s"src/test/resources/delta/$tableName")
-        val targetDirPath = Paths.get(dir.getAbsolutePath)
+        val targetDirPath = Paths.get(targetPath)
 
         try {
           // Copy golden file to a temporary directory so the test can append to it freely.
@@ -227,7 +228,7 @@ class DeltaVariantSuite
             parse_json('$goldenFileJsonString')) as array_of_variants""",
           s"named_struct('v', parse_json('$goldenFileJsonString')) struct_of_variants",
           s"map(id, parse_json('$goldenFileJsonString'), 'nullKey', null) map_of_variants"
-        ).write.format("delta").mode("append").save(dir.getAbsolutePath)
+        ).write.format("delta").mode("append").save(targetPath)
 
         val expected = spark.range(0, 15000, 1, 1).selectExpr(
           "id % 3 as id",
@@ -241,7 +242,7 @@ class DeltaVariantSuite
           s"named_struct('v', parse_json('$goldenFileJsonString')) struct_of_variants",
           s"map(id, parse_json('$goldenFileJsonString'), 'nullKey', null) map_of_variants"
         )
-        checkAnswer(spark.read.format("delta").load(dir.getAbsolutePath), expected.collect())
+        checkAnswer(spark.read.format("delta").load(targetPath), expected.collect())
       }
     }
   }
@@ -316,6 +317,27 @@ class DeltaVariantSuite
         .collect()(0)
         .getAs[MutableSeq[String]](0)
       assert(tableFeatures.find(f => f == "variantType-dev").nonEmpty)
+    }
+  }
+
+  test("time travel with variant column works") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val initialDf = spark.range(0, 100, 1, 1).selectExpr("parse_json(cast(id as string)) v")
+      initialDf
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+      
+      spark.range(100, 150, 1, 1).selectExpr("parse_json(cast(id as string)) v")
+        .write
+        .format("delta")
+        .mode("append")
+        .save(path)
+
+      val timeTravelDf = spark.read.format("delta").option("versionAsOf", "0").load(path)
+      checkAnswer(timeTravelDf, initialDf.collect())
     }
   }
 }
