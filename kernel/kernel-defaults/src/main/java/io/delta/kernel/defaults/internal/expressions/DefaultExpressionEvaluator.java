@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -33,8 +34,7 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
-import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
+import io.delta.kernel.defaults.internal.data.vector.*;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
@@ -48,6 +48,7 @@ import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpressi
  */
 public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     private final Expression expression;
+    private final StructType inputSchema;
 
     /**
      * Create a {@link DefaultExpressionEvaluator} instance bound to the given expression and
@@ -68,12 +69,14 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     "Can not create an expression handler returns result of type %s", outputType);
             throw DeltaErrors.unsupportedExpression(expression, Optional.of(reason));
         }
+        // TODO(richardc-db): Hack to avoid needing to pass the schema into the expression.
+        this.inputSchema = inputSchema;
         this.expression = transformResult.expression;
     }
 
     @Override
     public ColumnVector eval(ColumnarBatch input) {
-        return new ExpressionEvalVisitor(input).visit(expression);
+        return new ExpressionEvalVisitor(input, inputSchema).visit(expression);
     }
 
     @Override
@@ -278,6 +281,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             );
         }
 
+        @Override
+        ExpressionTransformResult visitVariantCoalesce(ScalarExpression variantCoalesce) {
+            checkArgument(
+                variantCoalesce.getChildren().size() == 1,
+                "Expected one input to 'variant_coalesce but received %s",
+                variantCoalesce.getChildren().size()
+            );
+            Expression transformedVariantInput = visit(childAt(variantCoalesce, 0)).expression;
+            return new ExpressionTransformResult(
+                new ScalarExpression(
+                    "VARIANT_COALESCE",
+                    Arrays.asList(transformedVariantInput)),
+                VariantType.VARIANT);
+        }
+
         private Predicate validateIsPredicate(
             Expression baseExpression,
             ExpressionTransformResult result) {
@@ -318,9 +336,11 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
      */
     private static class ExpressionEvalVisitor extends ExpressionVisitor<ColumnVector> {
         private final ColumnarBatch input;
+        private final StructType inputSchema;
 
-        ExpressionEvalVisitor(ColumnarBatch input) {
+        ExpressionEvalVisitor(ColumnarBatch input, StructType inputSchema) {
             this.input = input;
+            this.inputSchema = inputSchema;
         }
 
         /*
@@ -555,6 +575,119 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     }
                     return 0; // If all are null then any idx suffices
                 }
+            );
+        }
+
+        @Override
+        ColumnVector visitVariantCoalesce(ScalarExpression variantCoalesce) {
+            return variantCoalesceImpl(
+                visit(childAt(variantCoalesce, 0)),
+                inputSchema.at(0).getDataType()
+            );
+        }
+
+        private ColumnVector variantCoalesceImpl(ColumnVector inputVec, DataType dt) {
+            if (dt instanceof StructType) {
+                StructType structType = (StructType) dt;
+                DefaultStructVector structVec = (DefaultStructVector) inputVec;
+                ColumnVector[] structColVecs = new ColumnVector[structType.length()];
+                for (int i = 0; i < structType.length(); i++) {
+                    if (structType.at(i).getDataType() instanceof ArrayType ||
+                        structType.at(i).getDataType() instanceof StructType ||
+                        structType.at(i).getDataType() instanceof MapType ||
+                        structType.at(i).getDataType() instanceof VariantType) {
+                        structColVecs[i] = variantCoalesceImpl(
+                            structVec.getChild(i),
+                            structType.at(i).getDataType()
+                        );
+                    } else {
+                        structColVecs[i] = structVec.getChild(i);
+                    }
+                }
+                return new DefaultStructVector(
+                    structVec.getSize(),
+                    structType,
+                    structVec.getNullability(),
+                    structColVecs
+                );
+            }
+
+            if (dt instanceof ArrayType) {
+                ArrayType arrType = (ArrayType) dt;
+                DefaultArrayVector arrVec = (DefaultArrayVector) inputVec;
+
+                if (arrType.getElementType() instanceof ArrayType ||
+                    arrType.getElementType() instanceof StructType ||
+                    arrType.getElementType() instanceof MapType ||
+                    arrType.getElementType() instanceof VariantType) {
+                    ColumnVector elementVec = variantCoalesceImpl(
+                        arrVec.getElementVector(),
+                        arrType.getElementType()
+                    );
+
+                    return new DefaultArrayVector(
+                        arrVec.getSize(),
+                        arrType,
+                        arrVec.getNullability(),
+                        arrVec.getOffsets(),
+                        elementVec
+                    );
+                }
+                return arrVec;
+            }
+
+            if (dt instanceof MapType) {
+                MapType mapType = (MapType) dt;
+                DefaultMapVector mapVec = (DefaultMapVector) inputVec;
+
+                ColumnVector valueVec = mapVec.getValueVector();
+                if (mapType.getValueType() instanceof ArrayType ||
+                    mapType.getValueType() instanceof StructType ||
+                    mapType.getValueType() instanceof MapType ||
+                    mapType.getValueType() instanceof VariantType) {
+                    valueVec = variantCoalesceImpl(
+                        mapVec.getValueVector(),
+                        mapType.getValueType()
+                    );
+                }
+                ColumnVector keyVec = mapVec.getKeyVector();
+                if (mapType.getKeyType() instanceof ArrayType ||
+                    mapType.getKeyType() instanceof StructType ||
+                    mapType.getKeyType() instanceof MapType ||
+                    mapType.getKeyType() instanceof VariantType) {
+                    keyVec = variantCoalesceImpl(
+                        mapVec.getKeyVector(),
+                        mapType.getKeyType()
+                    );
+                }
+                return new DefaultMapVector(
+                    mapVec.getSize(),
+                    mapType,
+                    mapVec.getNullability(),
+                    mapVec.getOffsets(),
+                    keyVec,
+                    valueVec
+                );
+            }
+
+            DefaultStructVector structBackingVariant = (DefaultStructVector) inputVec;
+            checkArgument(
+                structBackingVariant.getChild(0).getDataType() instanceof BinaryType,
+                "Expected struct field 0 backing variant to be binary type. Actual: %s",
+                structBackingVariant.getChild(0).getDataType()
+            );
+            checkArgument(
+                structBackingVariant.getChild(1).getDataType() instanceof BinaryType,
+                "Expected struct field 1 backing variant to be binary type. Actual: %s",
+                structBackingVariant.getChild(1).getDataType()
+            );
+
+            return new DefaultVariantVector(
+                structBackingVariant.getSize(),
+                VariantType.VARIANT,
+                structBackingVariant.getNullability(),
+                structBackingVariant.getChild(0),
+                structBackingVariant.getChild(1)
             );
         }
 
