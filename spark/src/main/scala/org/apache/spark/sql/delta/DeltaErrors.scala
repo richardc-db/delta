@@ -74,9 +74,6 @@ trait DocsPath {
   /**
    * Get the link to the docs for the given relativePath. Validates that the error generating the
    * link is added to docsLinks.
-   * Please only use this function if SparkConf is directly available.
-   * If needed to retrieve SparkConf from SparkSession,
-   * please use more safe function [[generateDocsLinkOption]].
    *
    * @param relativePath the relative path after the base url to access.
    * @param skipValidation whether to validate that the function generating the link is
@@ -87,18 +84,9 @@ trait DocsPath {
       conf: SparkConf,
       relativePath: String,
       skipValidation: Boolean = false): String = {
-    require(conf != null)
     if (!skipValidation) assertValidCallingFunction()
     baseDocsPath(conf) + relativePath
   }
-
-  /** Safe alternative to [[generateDocsLink]] that validates sparkContext before accessing it. */
-  def generateDocsLinkOption(
-      spark: SparkSession,
-      relativePath: String,
-      skipValidation: Boolean = false): Option[String] =
-    Option(spark.sparkContext)
-      .map(context => generateDocsLink(context.getConf, relativePath, skipValidation))
 
   /**
    * List of error function names for all errors that have URLs. When adding your error to this list
@@ -683,13 +671,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def unsupportedDeepCloneException(): Throwable = {
-    new DeltaIllegalArgumentException(
-      errorClass = "DELTA_UNSUPPORTED_DEEP_CLONE",
-      messageParameters = Array.empty
-    )
-  }
-
   def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW",
@@ -1261,8 +1242,8 @@ trait DeltaErrorsBase
   def multipleSourceRowMatchingTargetRowInMergeException(spark: SparkSession): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
-      messageParameters = Array(generateDocsLinkOption(spark,
-        "/delta-update.html#upsert-into-a-table-using-merge").getOrElse("-"))
+      messageParameters = Array(generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#upsert-into-a-table-using-merge"))
     )
   }
 
@@ -1270,12 +1251,10 @@ trait DeltaErrorsBase
     new DeltaRuntimeException(errorClass = "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY")
 
   def sourceNotDeterministicInMergeException(spark: SparkSession): Throwable = {
-    val docRefer =
-      generateDocsLinkOption(spark, "/delta-update.html#operation-semantics")
-        .map(link => s" Please refer to $link for more information.")
-        .getOrElse("")
     new UnsupportedOperationException(
-      s"Cannot perform Merge because the source dataset is not deterministic.$docRefer"
+      s"""Cannot perform Merge because the source dataset is not deterministic. Please refer to
+         |${generateDocsLink(spark.sparkContext.getConf,
+        "/delta-update.html#operation-semantics")} for more information.""".stripMargin
     )
   }
 
@@ -1334,7 +1313,7 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG",
       messageParameters = Array(tableName, path.toString,
-        generateDocsLinkOption(spark, "/index.html").getOrElse("-")))
+      generateDocsLink(spark.sparkContext.getConf, "/index.html")))
   }
 
   def createExternalTableWithoutSchemaException(
@@ -1342,15 +1321,15 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_SCHEMA",
       messageParameters = Array(tableName, path.toString,
-        generateDocsLinkOption(spark, "/index.html").getOrElse("-")))
+        generateDocsLink(spark.sparkContext.getConf, "/index.html")))
   }
 
   def createManagedTableWithoutSchemaException(
       tableName: String, spark: SparkSession): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_MANAGED_TABLE_SYNTAX_NO_SCHEMA",
-      messageParameters = Array(tableName,
-        generateDocsLinkOption(spark, "/index.html").getOrElse("-"))
+      messageParameters = Array(tableName, s"""${generateDocsLink(spark.sparkContext.getConf,
+        "/index.html")}""".stripMargin)
     )
   }
 
@@ -1776,12 +1755,11 @@ trait DeltaErrorsBase
   }
 
   def ignoreStreamingUpdatesAndDeletesWarning(spark: SparkSession): String = {
-    val docPage =
-      generateDocsLinkOption(spark, "/delta-streaming.html#ignoring-updates-and-deletes")
-        .map(link => s" Refer to $link for details.")
-        .getOrElse("")
+    val docPage = DeltaErrors.generateDocsLink(
+      spark.sparkContext.getConf,
+      "/delta-streaming.html#ignoring-updates-and-deletes")
     s"""WARNING: The 'ignoreFileDeletion' option is deprecated. Switch to using one of
-       |'ignoreDeletes' or 'ignoreChanges'.$docPage
+       |'ignoreDeletes' or 'ignoreChanges'. Refer to $docPage for details.
          """.stripMargin
   }
 
@@ -2331,7 +2309,7 @@ trait DeltaErrorsBase
       errorClass = "DELTA_READ_FEATURE_PROTOCOL_REQUIRES_WRITE",
       messageParameters = Array(
         requiredWriterVersion.toString,
-        generateDocsLinkOption(SparkSession.active, "/index.html").getOrElse("-")))
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
   }
 
   def tableFeatureRequiresHigherReaderProtocolVersion(
@@ -2344,7 +2322,7 @@ trait DeltaErrorsBase
         feature,
         currentVersion.toString,
         requiredVersion.toString,
-        generateDocsLinkOption(SparkSession.active, "/index.html").getOrElse("-")))
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
   }
 
   def tableFeatureRequiresHigherWriterProtocolVersion(
@@ -2357,7 +2335,7 @@ trait DeltaErrorsBase
         feature,
         currentVersion.toString,
         requiredVersion.toString,
-        generateDocsLinkOption(SparkSession.active, "/index.html").getOrElse("-")))
+        generateDocsLink(SparkSession.active.sparkContext.getConf, "/index.html")))
   }
 
   def tableFeatureMismatchException(features: Iterable[String]): DeltaTableFeatureException = {
@@ -2969,7 +2947,7 @@ trait DeltaErrorsBase
     new DeltaStreamingColumnMappingSchemaIncompatibleException(
       readSchema,
       incompatibleSchema,
-      generateDocsLinkOption(spark, docLink).getOrElse("-"),
+      generateDocsLink(spark.sparkContext.getConf, docLink),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
         "detectedDuringStreaming" -> detectedDuringStreaming.toString

@@ -1383,16 +1383,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val OVERWRITE_REMOVE_METRICS_ENABLED =
-    buildConf("insertOverwrite.removeMetrics.enabled")
-      .internal()
-      .doc(
-        """
-          |When enabled, insert operations in overwrite mode will add metrics describing
-          |removed data to table's history""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
   val LOG_SIZE_IN_MEMORY_THRESHOLD =
     buildConf("streaming.logSizeInMemoryThreshold")
       .internal()
@@ -2335,6 +2325,20 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  ///////////
+  // VARIANT
+  ///////////////////
+  val FORCE_USE_PREVIEW_VARIANT_FEATURE = buildConf("variant.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, creating new tables with variant columns only attaches the 'variantType-preview'
+        | table feature. Attempting to operate on existing tables created with the stable feature
+        | does not require that the preview table feature be present.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
 
   ///////////
   // TESTING
